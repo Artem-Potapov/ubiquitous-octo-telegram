@@ -52,7 +52,9 @@ class TasksRow(TaskCreate, table=True):
     __tablename__ = "tasks"
     id: int | None = SQField(default=None, primary_key=True)
     created_at: datetime = SQField(default_factory=utc_now)
-    assignments: list[AssignmentsRow] = SQRelationship()
+    assignments: list[AssignmentsRow] = SQRelationship(
+        sa_relationship_kwargs={"lazy": "selectin"}
+    )
     network_id: int = SQField(foreign_key="care_networks.id")
     created_by_person_id: int | None = SQField(None, foreign_key="people.id", nullable=True)
 

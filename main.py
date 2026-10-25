@@ -3,7 +3,8 @@ from typing import Annotated
 
 import anyio
 from fastapi import FastAPI, Request, Depends
-from db.db_manager import SQLiteDBManager, DBManager
+from db.db_manager import SQLiteDBManager
+from db.db_contract import DBManager
 from misc.dependencies import DatabaseDependency
 
 

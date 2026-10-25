@@ -1,7 +1,8 @@
 # dependencies.py
 from typing import Annotated
 from fastapi import Depends, Request
-from db.db_manager import DBManager
+from db.db_contract import DBManager
+
 
 def get_database(request: Request) -> DBManager:
     # noinspection PyUnresolvedReferences
