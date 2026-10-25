@@ -2,12 +2,18 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+from sqlalchemy import event
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
+from sqlmodel import SQLModel
+from sqlmodel.ext.asyncio.session import AsyncSession
+
 from db.db_contract import PersonCreate, Person, PersonUpdate, CareNetworkCreate, CareNetwork, RelationshipCreate, Relationship, NetworkGraph, \
     TaskCreate, Task, TaskUpdate, TaskAssignment, AssignmentStatus, AvailabilityWindowCreate, AvailabilityWindow, CarePlanCreate, CarePlan, GapCreate, \
     Gap, GapStatus, CheckinCreate, Checkin, BurnoutScoreCreate, BurnoutScore, AccessGrant
+from db.db_models import PersonsRow  # importing tables registers them in SQLModel.metadata
 
 
-class FakeDBManager(ABC):
+class DBManager(ABC):
     """
     Rules every implementation follows:
 
@@ -121,7 +127,7 @@ class FakeDBManager(ABC):
 
     @abstractmethod
     async def list_tasks_for_person(
-        self, network_id: int, person_id: int, viewer_id: int
+            self, network_id: int, person_id: int, viewer_id: int
     ) -> list[Task]:
         """Tasks the person is assigned to; same ordering as list_tasks."""
 
@@ -139,7 +145,7 @@ class FakeDBManager(ABC):
 
     @abstractmethod
     async def set_assignment_status(
-        self, task_id: int, person_id: int, status: AssignmentStatus
+            self, task_id: int, person_id: int, status: AssignmentStatus
     ) -> TaskAssignment:
         """Updates updated_at. NotFoundError if not assigned."""
 
@@ -147,7 +153,7 @@ class FakeDBManager(ABC):
 
     @abstractmethod
     async def replace_availability(
-        self, person_id: int, windows: list[AvailabilityWindowCreate]
+            self, person_id: int, windows: list[AvailabilityWindowCreate]
     ) -> list[AvailabilityWindow]:
         """Replaces all of the person's windows. NotFoundError for unknown person."""
 
@@ -157,7 +163,7 @@ class FakeDBManager(ABC):
 
     @abstractmethod
     async def list_availability_in_network(
-        self, network_id: int, viewer_id: int
+            self, network_id: int, viewer_id: int
     ) -> dict[int, list[AvailabilityWindow]]:
         """Keyed by person id; every member present (empty list if none)."""
 
@@ -184,7 +190,7 @@ class FakeDBManager(ABC):
 
     @abstractmethod
     async def list_gaps(
-        self, network_id: int, viewer_id: int, status: GapStatus | None = GapStatus.open
+            self, network_id: int, viewer_id: int, status: GapStatus | None = GapStatus.open
     ) -> list[Gap]:
         """status=None returns all. Ordered high -> low severity, then id.
         A gap linked to a restricted task or care plan is redacted for viewers without access."""
@@ -201,7 +207,7 @@ class FakeDBManager(ABC):
 
     @abstractmethod
     async def list_checkins(
-        self, network_id: int, person_id: int, viewer_id: int, limit: int = 50
+            self, network_id: int, person_id: int, viewer_id: int, limit: int = 50
     ) -> list[Checkin]:
         """Newest first. AccessDeniedError unless viewer is person_id or SYSTEM_VIEWER_ID."""
 
@@ -215,7 +221,7 @@ class FakeDBManager(ABC):
 
     @abstractmethod
     async def get_burnout_history(
-        self, network_id: int, person_id: int, viewer_id: int, limit: int = 30
+            self, network_id: int, person_id: int, viewer_id: int, limit: int = 30
     ) -> list[BurnoutScore]:
         """The newest `limit` rows, returned oldest -> newest for charting."""
 
@@ -223,14 +229,14 @@ class FakeDBManager(ABC):
 
     @abstractmethod
     async def grant_restricted_access(
-        self, network_id: int, grantee_person_id: int, granted_by_person_id: int
+            self, network_id: int, grantee_person_id: int, granted_by_person_id: int
     ) -> AccessGrant:
         """Idempotent. AccessDeniedError unless granter is the patient or SYSTEM_VIEWER_ID.
         ConflictError if grantee is not a member."""
 
     @abstractmethod
     async def revoke_restricted_access(
-        self, network_id: int, grantee_person_id: int, revoked_by_person_id: int
+            self, network_id: int, grantee_person_id: int, revoked_by_person_id: int
     ) -> None:
         """No-op if no grant exists. Same AccessDeniedError rule as grant."""
 
@@ -242,3 +248,48 @@ class FakeDBManager(ABC):
     async def can_view_restricted(self, network_id: int, viewer_id: int) -> bool:
         """True for SYSTEM_VIEWER_ID, the patient, physician members, and grantees.
         Returns False (does not raise) for non-members."""
+
+# REAL DEAL -----------------------------------------------------------------------------------------------------------
+
+def enable_sqlite_pragmas(dbapi_connection, _connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.close()
+
+
+class SQLiteDBManager(DBManager):
+    def __init__(self, database_path: str):
+        self.database_url = f"sqlite+aiosqlite:///{database_path}"
+        self.engine: AsyncEngine | None = None
+        self.session_factory: async_sessionmaker[AsyncSession] | None = None
+
+    # MANAGEMENT -------------------------------------------------------------------------------
+    async def connect(self) -> None:
+        self.engine = create_async_engine(self.database_url, connect_args={"timeout": 15})
+        event.listen(self.engine.sync_engine, "connect", enable_sqlite_pragmas)
+        self.session_factory = async_sessionmaker(
+            self.engine, class_=AsyncSession, expire_on_commit=False
+        )
+
+    async def close(self) -> None:
+        if self.engine is not None:
+            await self.engine.dispose()
+            self.engine = None
+
+    async def init_schema(self) -> None:
+        async with self.engine.begin() as connection:
+            await connection.run_sync(SQLModel.metadata.create_all)
+
+    async def create_person(self, new_person: PersonCreate) -> Person:
+        async with self.session_factory() as session, session.begin():
+            person_row = PersonsRow.model_validate(new_person)
+            session.add(person_row)
+            await session.flush()  # assigns the id
+            return Person.model_validate(person_row)
+
+    # METHODS ---------------------------------------------------------------------------------
+
+    #TODO
+    async def create_person(self, new_person: PersonCreate) -> Person:
+        ...
