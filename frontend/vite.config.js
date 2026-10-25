@@ -4,4 +4,8 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  server: {
+      host: true, //expose
+    allowedHosts: ['demo.somenewsteps.space', '127.0.0.1', 'localhost'] 
+  }
 })
