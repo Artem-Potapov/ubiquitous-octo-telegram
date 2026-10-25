@@ -8,9 +8,11 @@ The frontend runs on a simulated backend until the FastAPI service is ready. Thi
 cd frontend
 npm install
 npm run dev          # http://localhost:5173
+npm run typecheck    # TypeScript checks
+npm run build        # typecheck + production build
 ```
 
-By default the app uses `src/api/mockBackend.js`, an in-memory implementation that follows the `DBManager` rules: membership checks, redaction with the `REDACTED_*` constants, and patient-only grants. Refreshing the page resets the demo data.
+By default the app uses `src/api/mockBackend.ts`, an in-memory implementation that follows the `DBManager` rules: membership checks, redaction with the `REDACTED_*` constants, and patient-only grants. Refreshing the page resets the demo data.
 
 To use the real API, create `frontend/.env.local`:
 
@@ -23,7 +25,9 @@ FastAPI needs CORS enabled for `http://localhost:5173`.
 
 ## How the UI talks to the API
 
-- All requests go through `src/api/httpBackend.js`. Components never call `fetch` directly.
+- The frontend is TypeScript. `src/api/contract.ts` mirrors every pydantic model in `db_contract.py` as a TypeScript interface, plus a `CareApi` interface that both the mock and the HTTP client implement. If you change a model in `db_contract.py`, update `contract.ts` to match, and `npm run typecheck` will show every place in the UI that's affected.
+
+- All requests go through `src/api/httpBackend.ts`. Components never call `fetch` directly.
 - JSON bodies use the **exact pydantic models** from `db_contract.py`, with snake_case fields. Dates are `YYYY-MM-DD`, datetimes ISO 8601, and times `HH:MM` or `HH:MM:SS`.
 - **Viewer identity (demo only):** the demo role switcher sends the viewer's person id in an `X-Viewer-Id` header. Pass it through as `viewer_id`. Production would take it from an authenticated session.
 - **Errors:** `NotFoundError` → 404, `AccessDeniedError` → 403, `ConflictError` → 409, with `{"detail": "..."}`. The UI shows `detail` in a toast.
@@ -31,7 +35,7 @@ FastAPI needs CORS enabled for `http://localhost:5173`.
 
 ## Proposed endpoints
 
-None of these exist yet. The paths are a proposal; if you choose different ones, only `httpBackend.js` needs updating.
+None of these exist yet. The paths are a proposal; if you choose different ones, only `httpBackend.ts` needs updating.
 
 | Method & path | DBManager method |
 |---|---|
@@ -77,7 +81,7 @@ None of these exist yet. The paths are a proposal; if you choose different ones,
 
 ## Gap-detection rules the UI expects
 
-These are the rules in `src/domain/gapEngine.js`. The mock uses them, so the backend engine can port them directly.
+These are the rules in `src/domain/gapEngine.ts`. The mock uses them, so the backend engine can port them directly.
 
 | `gap_kind` | Rule | Severity | `suggested_assignee_id` |
 |---|---|---|---|
@@ -86,12 +90,12 @@ These are the rules in `src/domain/gapEngine.js`. The mock uses them, so the bac
 | `missed` | One gap per assignment with `status = missed` | `high` | Top-ranked alternative owner |
 | `plan_conflict` | Optional AI care-plan review (Gemini). The demo uses a canned result; core detection never depends on it. | From the AI | Usually a physician |
 
-**Suggestion ranking** (`src/domain/suggestions.js`):
+**Suggestion ranking** (`src/domain/suggestions.ts`):
 - People who don't match `required_role` (subrole or person_type) are excluded. This keeps clinical tasks away from family members.
 - The patient is excluded.
 - Everyone else is scored on availability on the due date's weekday (40), lightness of current load (40), exact subrole match (+20), and −10 per missed assignment.
 
-**Burnout score** (`src/domain/workload.js`), an illustrative formula only:
+**Burnout score** (`src/domain/workload.ts`), an illustrative formula only:
 - `score = 65 × task_share + min(10 × missed, 15) + 20 × max(0, −sentiment_average)`
 - `task_share` is the person's share of the family's weekly task occurrences, weighted daily 7, weekly 1, monthly 0.25, once 1, as needed 0.5. Shared tasks are split between owners.
 
