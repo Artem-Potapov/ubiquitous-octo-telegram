@@ -131,22 +131,8 @@ export function buildDemoScenario() {
   }
 
   const carePlans = [
-    {
-      id: 1,
-      author_person_id: 6,
-      title: 'Heart failure management plan',
-      raw_text:
-        'Furosemide 40 mg each morning. Fluid restriction: no more than 1.5 L per day. Weigh daily before breakfast; call the clinic for a gain of more than 2 lb in a day or 5 lb in a week. Sodium under 2 g per day.',
-      sensitivity: 'normal',
-    },
-    {
-      id: 2,
-      author_person_id: 7,
-      title: 'Type 2 diabetes management plan',
-      raw_text:
-        'Metformin 1000 mg twice daily with meals. Fasting blood glucose each morning. Encourage 2–2.5 L of fluid intake daily to prevent dehydration. A1C recheck in one week.',
-      sensitivity: 'normal',
-    },
+    // The heart-failure and diabetes plans are NOT seeded: the demo uploads them
+    // (see src/api/samplePlans.ts) so the conflict appears live.
     {
       id: 3,
       author_person_id: 7,
@@ -167,18 +153,8 @@ export function buildDemoScenario() {
 
   // Produced by the optional AI care-plan review (Gemini on the backend). The
   // demo keeps a canned result so the core experience never depends on an LLM.
-  const aiPlanConflicts = [
-    {
-      key: 'fluid-guidance',
-      gap_kind: 'plan_conflict',
-      severity: 'medium',
-      description:
-        'Fluid guidance conflicts: the heart-failure plan limits fluids to 1.5 L/day, while the diabetes plan encourages 2–2.5 L/day. Caregivers cannot follow both.',
-      task_id: null,
-      suggested_assignee_id: 6,
-      related_care_plan_ids: [1, 2],
-    },
-  ]
+  // Filled when care plans are analyzed (mockBackend.analyzeCarePlans).
+  const aiPlanConflicts = []
 
   const checkins = [
     [2, "I haven't had a full night's sleep since Walter came home. I'm doing almost everything myself.", -0.7, 3],

@@ -31,16 +31,16 @@ let nextId = {}
 function seed() {
   const s = buildDemoScenario()
   db = { ...s, gaps: [], resolvedPlanConflictKeys: new Set() }
-  nextId = { assignment: 1000, gap: 1, checkin: 1000, burnout: 1000 }
+  nextId = { assignment: 1000, gap: 1, checkin: 1000, burnout: 1000, plan: 100 }
   runEngine(s.network.id)
 }
 
 const clone = (v) => structuredClone(v)
-const delay = () => new Promise((r) => setTimeout(r, LATENCY_MS))
+const delay = (ms = LATENCY_MS) => new Promise((r) => setTimeout(r, ms))
 const now = () => new Date().toISOString()
 
-async function respond(fn) {
-  await delay()
+async function respond(fn, ms) {
+  await delay(ms)
   return clone(fn())
 }
 
@@ -287,6 +287,59 @@ export const mockBackend = {
       const { _key, ...rest } = gap // eslint-disable-line no-unused-vars
       return rest
     }),
+
+  // Mock-only: the real API has no care-plan write endpoints yet. The UI checks
+  // for these optional methods before offering upload and review.
+
+  /** Mock-only stand-in for creating a care plan. */
+  createCarePlan: (networkId, viewerId, { title, raw_text, author_person_id }) =>
+    respond(() => {
+      assertMember(networkId, viewerId)
+      const authorId = author_person_id ?? viewerId
+      if (!isMember(authorId)) throw new ConflictError('Author is not a network member')
+      const plan = { id: nextId.plan++, network_id: networkId, author_person_id: authorId, title, raw_text, sensitivity: 'normal', created_at: now() }
+      db.carePlans.push(plan)
+      return { ...plan, is_redacted: false }
+    }),
+
+  /**
+   * Mock-only stand-in for the Gemini care-plan review: a keyword check for
+   * "limit fluids" vs "drink more". Returns the plan_conflict gaps it found.
+   */
+  analyzeCarePlans: (networkId, viewerId, planIds) =>
+    respond(() => {
+      assertMember(networkId, viewerId)
+      const plans = planIds.map((id) => {
+        const p = db.carePlans.find((x) => x.id === id)
+        if (!p) throw new NotFoundError(`Care plan ${id} not found`)
+        return p
+      })
+      const ok = viewerCanSeeRestricted(networkId, viewerId)
+      if (!ok && plans.some((p) => p.sensitivity === 'restricted')) throw new AccessDeniedError('Restricted care plan')
+
+      const text = (p) => p.raw_text.toLowerCase()
+      const restricts = (p) => /fluid restriction|restrict\w* fluid|no more than [\d.]+\s*l\b/.test(text(p))
+      const encourages = (p) => /encourage[^.]*fluid|[\d.–-]+\s*l of fluid/.test(text(p))
+      const limiter = plans.find(restricts)
+      const pusher = plans.find((p) => p !== limiter && encourages(p))
+      if (!limiter || !pusher) return []
+
+      const key = `fluid-${[limiter.id, pusher.id].sort((a, b) => a - b).join('-')}`
+      db.resolvedPlanConflictKeys.delete(key)
+      if (!db.aiPlanConflicts.some((c) => c.key === key)) {
+        db.aiPlanConflicts.push({
+          key,
+          gap_kind: 'plan_conflict',
+          severity: 'medium',
+          description: `Fluid guidance conflicts: "${limiter.title}" limits fluids, while "${pusher.title}" encourages higher intake. Caregivers cannot follow both.`,
+          task_id: null,
+          suggested_assignee_id: db.people.find((p) => p.id === limiter.author_person_id)?.is_physician ? limiter.author_person_id : 6,
+          related_care_plan_ids: [limiter.id, pusher.id],
+        })
+      }
+      runEngine(networkId)
+      return db.gaps.filter((g) => g._key === key).map(({ _key, ...g }) => ({ ...g, is_redacted: false })) // eslint-disable-line no-unused-vars
+    }, 900),
 
   // check-ins & burnout
   createCheckin: (newCheckin) =>
