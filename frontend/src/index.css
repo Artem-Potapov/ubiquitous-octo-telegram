@@ -1,0 +1,80 @@
+@import "tailwindcss";
+
+/* Design tokens. Tailwind v4 turns these into utilities, e.g. font-display, bg-ink-950. */
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-display: 'Plus Jakarta Sans', 'Inter', ui-sans-serif, system-ui, sans-serif;
+
+  --color-ink-950: #070b1a;
+  --color-ink-900: #0c1229;
+  --color-ink-800: #141c3a;
+  --color-ink-700: #1f2a50;
+
+  --color-brand-50: #eef4ff;
+  --color-brand-100: #dbe6fe;
+  --color-brand-500: #4f6ef7;
+  --color-brand-600: #3b56e6;
+  --color-brand-700: #2f44c4;
+
+  --animate-fade-in: fade-in 0.35s ease-out both;
+  --animate-slide-in: slide-in 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-pop: pop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  --animate-gap-pulse: gap-pulse 2.4s ease-in-out infinite;
+  --animate-twinkle: twinkle 4s ease-in-out infinite;
+
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes slide-in {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
+  }
+  @keyframes pop {
+    0% { transform: scale(0.6); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+  @keyframes gap-pulse {
+    0%, 100% { opacity: 0.25; transform: scale(1); }
+    50% { opacity: 0.7; transform: scale(1.12); }
+  }
+  @keyframes twinkle {
+    0%, 100% { opacity: 0.25; }
+    50% { opacity: 0.9; }
+  }
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  body {
+    @apply bg-slate-50 text-slate-900 font-sans;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-brand-500;
+  }
+}
+
+/* SVG pieces of the constellation that need transform-origin on their own centre. */
+.svg-pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* Marching dashes on "gap" edges in the constellation. */
+.edge-flow {
+  animation: edge-flow 1.4s linear infinite;
+}
+@keyframes edge-flow {
+  to { stroke-dashoffset: -24; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
