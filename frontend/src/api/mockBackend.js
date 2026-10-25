@@ -1,0 +1,414 @@
+// SIMULATED BACKEND - an in-memory stand-in for the FastAPI + SQLite service.
+//
+// Each function mirrors a DBManager method from db_manager.py (camelCase name,
+// same arguments, same JSON shapes) and follows its documented rules:
+// membership checks, redaction of restricted rows, and patient-only grants.
+// Redaction happens HERE, before data reaches React, the same way the real
+// backend must do it. Hiding things in components would not be real privacy.
+//
+// Data lives in memory: refreshing the page resets the demo.
+
+import { buildDemoScenario } from '../data/demoScenario'
+import { detectGaps as runDeterministicEngine } from '../domain/gapEngine'
+import { computeStrain } from '../domain/workload'
+import {
+  SYSTEM_VIEWER_ID,
+  REDACTED_TASK_TITLE,
+  REDACTED_RELATIONSHIP_LABEL,
+  REDACTED_CARE_PLAN_TITLE,
+  REDACTED_GAP_DESCRIPTION,
+  AccessDeniedError,
+  ConflictError,
+  NotFoundError,
+} from './contract'
+
+const LATENCY_MS = 120
+const SEVERITY_RANK = { high: 0, medium: 1, low: 2 }
+
+let db = null
+let nextId = {}
+
+function seed() {
+  const s = buildDemoScenario()
+  db = { ...s, gaps: [], resolvedPlanConflictKeys: new Set() }
+  nextId = { assignment: 1000, gap: 1, checkin: 1000, burnout: 1000, plan: 100 }
+  runEngine(s.network.id)
+}
+
+const clone = (v) => structuredClone(v)
+const delay = (ms = LATENCY_MS) => new Promise((r) => setTimeout(r, ms))
+const now = () => new Date().toISOString()
+
+async function respond(fn, ms) {
+  await delay(ms)
+  return clone(fn())
+}
+
+// ----- access helpers ------------------------------------------------------
+
+function getNetwork(networkId) {
+  if (db.network.id !== networkId) throw new NotFoundError(`Network ${networkId} not found`)
+  return db.network
+}
+
+function findPerson(personId) {
+  const p = db.people.find((x) => x.id === personId)
+  if (!p) throw new NotFoundError(`Person ${personId} not found`)
+  return p
+}
+
+function isMember(personId) {
+  return db.members.includes(personId)
+}
+
+function assertMember(networkId, viewerId) {
+  getNetwork(networkId)
+  if (viewerId === SYSTEM_VIEWER_ID) return
+  if (!isMember(viewerId)) throw new AccessDeniedError('Viewer is not a member of this network')
+}
+
+function viewerCanSeeRestricted(networkId, viewerId) {
+  if (viewerId === SYSTEM_VIEWER_ID) return true
+  if (!isMember(viewerId) || db.network.id !== networkId) return false
+  if (viewerId === db.network.patient_id) return true
+  if (db.people.find((p) => p.id === viewerId)?.is_physician) return true
+  return db.accessGrants.some((g) => g.grantee_person_id === viewerId)
+}
+
+const redactTask = (t, ok) => (ok || t.sensitivity !== 'restricted' ? { ...t, is_redacted: false } : { ...t, title: REDACTED_TASK_TITLE, is_redacted: true })
+const redactRel = (r, ok) => (ok || r.sensitivity !== 'restricted' ? { ...r, is_redacted: false } : { ...r, label: REDACTED_RELATIONSHIP_LABEL, is_redacted: true })
+const redactPlan = (p, ok) => (ok || p.sensitivity !== 'restricted' ? { ...p, is_redacted: false } : { ...p, title: REDACTED_CARE_PLAN_TITLE, raw_text: '', is_redacted: true })
+
+function redactGap(g, ok) {
+  if (ok) return { ...g, is_redacted: false }
+  const task = db.tasks.find((t) => t.id === g.task_id)
+  const plans = db.carePlans.filter((p) => g.related_care_plan_ids.includes(p.id))
+  const restricted = task?.sensitivity === 'restricted' || plans.some((p) => p.sensitivity === 'restricted')
+  return restricted ? { ...g, description: REDACTED_GAP_DESCRIPTION, is_redacted: true } : { ...g, is_redacted: false }
+}
+
+const sortTasks = (tasks) =>
+  [...tasks].sort((a, b) => {
+    if (a.due_date === b.due_date) return a.id - b.id
+    if (a.due_date === null) return 1
+    if (b.due_date === null) return -1
+    return a.due_date < b.due_date ? -1 : 1
+  })
+
+// ----- engine (stands in for the backend's gap + burnout jobs) ------------
+
+function sentimentAverages() {
+  const out = {}
+  for (const p of db.people) {
+    const scores = db.checkins.filter((c) => c.person_id === p.id).slice(-5).map((c) => c.sentiment_score)
+    out[p.id] = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : null
+  }
+  return out
+}
+
+function runEngine(networkId) {
+  const people = db.people.filter((p) => isMember(p.id))
+  const detected = runDeterministicEngine({ tasks: db.tasks, people, availability: db.availability })
+  const aiConflicts = db.aiPlanConflicts
+    .filter((c) => !db.resolvedPlanConflictKeys.has(c.key))
+    .map(({ key, ...gap }) => ({ ...gap, _key: key }))
+  replaceOpenGaps(networkId, [...detected, ...aiConflicts])
+
+  // Burnout scores. Mock shortcut: today's score is replaced instead of
+  // appended so the weekly history chart stays readable during a demo.
+  const strain = computeStrain(db.tasks, people, sentimentAverages())
+  const today = now().slice(0, 10)
+  db.burnoutScores = db.burnoutScores.filter((s) => s.computed_at.slice(0, 10) !== today)
+  for (const row of strain) {
+    db.burnoutScores.push({
+      id: nextId.burnout++,
+      person_id: row.person_id,
+      network_id: networkId,
+      score: row.score,
+      task_share: Number(row.share.toFixed(3)),
+      missed_count: row.missed_count,
+      sentiment_average: row.sentiment_average === null ? null : Number(row.sentiment_average.toFixed(2)),
+      computed_at: now(),
+    })
+  }
+}
+
+function replaceOpenGaps(networkId, newGaps) {
+  db.gaps = db.gaps.filter((g) => g.status !== 'open')
+  for (const g of newGaps) {
+    db.gaps.push({ ...g, id: nextId.gap++, network_id: networkId, status: 'open', created_at: now(), resolved_at: null, resolved_by_person_id: null })
+  }
+}
+
+// Seed once all helpers above are initialized.
+seed()
+
+// ----- public API (mirrors DBManager) -------------------------------------
+
+export const mockBackend = {
+  isMock: true,
+
+  /** Mock-only: restore the original demo scenario. */
+  async resetDemo() {
+    await delay()
+    seed()
+  },
+
+  /**
+   * Proposed endpoint: re-run gap detection + burnout scoring.
+   * (The contract has replace_open_gaps; who triggers the engine is undecided.)
+   */
+  async detectGaps(networkId) {
+    await delay()
+    getNetwork(networkId)
+    runEngine(networkId)
+  },
+
+  // people & networks
+  getPerson: (personId) => respond(() => findPerson(personId)),
+
+  listPeopleInNetwork: (networkId, viewerId) =>
+    respond(() => {
+      assertMember(networkId, viewerId)
+      return db.people.filter((p) => isMember(p.id))
+    }),
+
+  listNetworksForPerson: (personId) => respond(() => (isMember(personId) ? [db.network] : [])),
+
+  getCareNetwork: (networkId, viewerId) =>
+    respond(() => {
+      assertMember(networkId, viewerId)
+      return db.network
+    }),
+
+  /** NOT in the contract - small patient profile for the overview header. */
+  getPatientProfile: (networkId, viewerId) =>
+    respond(() => {
+      assertMember(networkId, viewerId)
+      return db.patientProfile
+    }),
+
+  // graph
+  getNetworkGraph: (networkId, viewerId) =>
+    respond(() => {
+      assertMember(networkId, viewerId)
+      const ok = viewerCanSeeRestricted(networkId, viewerId)
+      return {
+        network_id: networkId,
+        nodes: db.people.filter((p) => isMember(p.id)),
+        edges: db.relationships.map((r) => redactRel(r, ok)),
+      }
+    }),
+
+  // tasks & assignments
+  listTasks: (networkId, viewerId) =>
+    respond(() => {
+      assertMember(networkId, viewerId)
+      const ok = viewerCanSeeRestricted(networkId, viewerId)
+      return sortTasks(db.tasks.filter((t) => t.network_id === networkId)).map((t) => redactTask(t, ok))
+    }),
+
+  updateTask: (taskId, changes) =>
+    respond(() => {
+      const task = db.tasks.find((t) => t.id === taskId)
+      if (!task) throw new NotFoundError(`Task ${taskId} not found`)
+      Object.assign(task, changes)
+      return { ...task, is_redacted: false }
+    }),
+
+  assignTask: (taskId, personId) =>
+    respond(() => {
+      const task = db.tasks.find((t) => t.id === taskId)
+      if (!task) throw new NotFoundError(`Task ${taskId} not found`)
+      findPerson(personId)
+      if (!isMember(personId)) throw new ConflictError('Assignee is not a network member')
+      const existing = task.assignments.find((a) => a.person_id === personId)
+      if (existing) return existing
+      const a = { id: nextId.assignment++, task_id: taskId, person_id: personId, status: 'pending', assigned_at: now(), updated_at: now() }
+      task.assignments.push(a)
+      return a
+    }),
+
+  unassignTask: (taskId, personId) =>
+    respond(() => {
+      const task = db.tasks.find((t) => t.id === taskId)
+      if (!task || !task.assignments.some((a) => a.person_id === personId)) throw new NotFoundError('Not assigned')
+      task.assignments = task.assignments.filter((a) => a.person_id !== personId)
+      return null
+    }),
+
+  setAssignmentStatus: (taskId, personId, status) =>
+    respond(() => {
+      const a = db.tasks.find((t) => t.id === taskId)?.assignments.find((x) => x.person_id === personId)
+      if (!a) throw new NotFoundError('Not assigned')
+      a.status = status
+      a.updated_at = now()
+      return a
+    }),
+
+  // availability
+  listAvailabilityInNetwork: (networkId, viewerId) =>
+    respond(() => {
+      assertMember(networkId, viewerId)
+      return Object.fromEntries(
+        db.members.map((id) => [id, (db.availability[id] ?? []).map((w, i) => ({ ...w, id: id * 100 + i, person_id: id }))]),
+      )
+    }),
+
+  // care plans
+  listCarePlans: (networkId, viewerId) =>
+    respond(() => {
+      assertMember(networkId, viewerId)
+      const ok = viewerCanSeeRestricted(networkId, viewerId)
+      return db.carePlans.map((p) => redactPlan(p, ok))
+    }),
+
+  // gaps
+  listGaps: (networkId, viewerId, status = 'open') =>
+    respond(() => {
+      assertMember(networkId, viewerId)
+      const ok = viewerCanSeeRestricted(networkId, viewerId)
+      return db.gaps
+        .filter((g) => status === null || g.status === status)
+        .sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || a.id - b.id)
+        .map(({ _key, ...g }) => redactGap(g, ok)) // eslint-disable-line no-unused-vars
+    }),
+
+  resolveGap: (gapId, resolvedByPersonId) =>
+    respond(() => {
+      const gap = db.gaps.find((g) => g.id === gapId)
+      if (!gap) throw new NotFoundError(`Gap ${gapId} not found`)
+      if (gap.status !== 'resolved') {
+        gap.status = 'resolved'
+        gap.resolved_at = now()
+        gap.resolved_by_person_id = resolvedByPersonId
+        if (gap._key) db.resolvedPlanConflictKeys.add(gap._key)
+      }
+      const { _key, ...rest } = gap // eslint-disable-line no-unused-vars
+      return rest
+    }),
+
+  // Mock-only: the real API has no care-plan write endpoints yet. The UI checks
+  // for these optional methods before offering upload and review.
+
+  /** Mock-only stand-in for creating a care plan. */
+  createCarePlan: (networkId, viewerId, { title, raw_text, author_person_id }) =>
+    respond(() => {
+      assertMember(networkId, viewerId)
+      const authorId = author_person_id ?? viewerId
+      if (!isMember(authorId)) throw new ConflictError('Author is not a network member')
+      const plan = { id: nextId.plan++, network_id: networkId, author_person_id: authorId, title, raw_text, sensitivity: 'normal', created_at: now() }
+      db.carePlans.push(plan)
+      return { ...plan, is_redacted: false }
+    }),
+
+  /**
+   * Mock-only stand-in for the Gemini care-plan review: a keyword check for
+   * "limit fluids" vs "drink more". Returns the plan_conflict gaps it found.
+   */
+  analyzeCarePlans: (networkId, viewerId, planIds) =>
+    respond(() => {
+      assertMember(networkId, viewerId)
+      const plans = planIds.map((id) => {
+        const p = db.carePlans.find((x) => x.id === id)
+        if (!p) throw new NotFoundError(`Care plan ${id} not found`)
+        return p
+      })
+      const ok = viewerCanSeeRestricted(networkId, viewerId)
+      if (!ok && plans.some((p) => p.sensitivity === 'restricted')) throw new AccessDeniedError('Restricted care plan')
+
+      const text = (p) => p.raw_text.toLowerCase()
+      const restricts = (p) => /fluid restriction|restrict\w* fluid|no more than [\d.]+\s*l\b/.test(text(p))
+      const encourages = (p) => /encourage[^.]*fluid|[\d.–-]+\s*l of fluid/.test(text(p))
+      const limiter = plans.find(restricts)
+      const pusher = plans.find((p) => p !== limiter && encourages(p))
+      if (!limiter || !pusher) return []
+
+      const key = `fluid-${[limiter.id, pusher.id].sort((a, b) => a - b).join('-')}`
+      db.resolvedPlanConflictKeys.delete(key)
+      if (!db.aiPlanConflicts.some((c) => c.key === key)) {
+        db.aiPlanConflicts.push({
+          key,
+          gap_kind: 'plan_conflict',
+          severity: 'medium',
+          description: `Fluid guidance conflicts: "${limiter.title}" limits fluids, while "${pusher.title}" encourages higher intake. Caregivers cannot follow both.`,
+          task_id: null,
+          suggested_assignee_id: db.people.find((p) => p.id === limiter.author_person_id)?.is_physician ? limiter.author_person_id : 6,
+          related_care_plan_ids: [limiter.id, pusher.id],
+        })
+      }
+      runEngine(networkId)
+      return db.gaps.filter((g) => g._key === key).map(({ _key, ...g }) => ({ ...g, is_redacted: false })) // eslint-disable-line no-unused-vars
+    }, 900),
+
+  // check-ins & burnout
+  createCheckin: (newCheckin) =>
+    respond(() => {
+      const c = { ...newCheckin, id: nextId.checkin++, created_at: now() }
+      db.checkins.push(c)
+      return c
+    }),
+
+  listCheckins: (networkId, personId, viewerId, limit = 50) =>
+    respond(() => {
+      assertMember(networkId, viewerId)
+      if (viewerId !== personId && viewerId !== SYSTEM_VIEWER_ID) throw new AccessDeniedError('Check-ins are private')
+      return db.checkins
+        .filter((c) => c.person_id === personId)
+        .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
+        .slice(0, limit)
+    }),
+
+  listLatestBurnoutScores: (networkId, viewerId) =>
+    respond(() => {
+      assertMember(networkId, viewerId)
+      const latest = new Map()
+      for (const s of db.burnoutScores) {
+        const prev = latest.get(s.person_id)
+        if (!prev || s.computed_at >= prev.computed_at) latest.set(s.person_id, s)
+      }
+      return [...latest.values()].sort((a, b) => b.score - a.score)
+    }),
+
+  getBurnoutHistory: (networkId, personId, viewerId, limit = 30) =>
+    respond(() => {
+      assertMember(networkId, viewerId)
+      return db.burnoutScores
+        .filter((s) => s.person_id === personId)
+        .sort((a, b) => (a.computed_at < b.computed_at ? -1 : 1))
+        .slice(-limit)
+    }),
+
+  // access control
+  grantRestrictedAccess: (networkId, granteeId, grantedById) =>
+    respond(() => {
+      getNetwork(networkId)
+      if (grantedById !== db.network.patient_id && grantedById !== SYSTEM_VIEWER_ID) {
+        throw new AccessDeniedError('Only the patient can grant access')
+      }
+      if (!isMember(granteeId)) throw new ConflictError('Grantee is not a network member')
+      const existing = db.accessGrants.find((g) => g.grantee_person_id === granteeId)
+      if (existing) return existing
+      const grant = { network_id: networkId, grantee_person_id: granteeId, granted_by_person_id: grantedById, granted_at: now() }
+      db.accessGrants.push(grant)
+      return grant
+    }),
+
+  revokeRestrictedAccess: (networkId, granteeId, revokedById) =>
+    respond(() => {
+      getNetwork(networkId)
+      if (revokedById !== db.network.patient_id && revokedById !== SYSTEM_VIEWER_ID) {
+        throw new AccessDeniedError('Only the patient can revoke access')
+      }
+      db.accessGrants = db.accessGrants.filter((g) => g.grantee_person_id !== granteeId)
+      return null
+    }),
+
+  listAccessGrants: (networkId, viewerId) =>
+    respond(() => {
+      assertMember(networkId, viewerId)
+      return db.accessGrants
+    }),
+
+  canViewRestricted: (networkId, viewerId) => respond(() => viewerCanSeeRestricted(networkId, viewerId)),
+}
