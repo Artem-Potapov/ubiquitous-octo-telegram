@@ -5,6 +5,7 @@ import { useGapGeometry } from '../../hooks/useGapGeometry'
 import { isBurnoutWarning } from '../../lib/burnout'
 import { useConstellation } from '../../store/useConstellation'
 import { Skeleton } from '../common/Skeleton'
+import { HealthStrip } from '../shell/HealthStrip'
 import { GapEdge } from './GapEdge'
 import { GhostTaskNode } from './GhostTaskNode'
 import { Legend } from './Legend'
@@ -170,7 +171,11 @@ export function ConstellationGraph() {
       }}
     >
       <Background gap={24} color="var(--color-slate-200)" />
-      <Panel position="top-right">
+      <Panel position="top-left">
+        <HealthStrip />
+      </Panel>
+      {/* Capped to the graph's height; the panel scrolls inside instead of being cut off. */}
+      <Panel position="top-right" style={{ maxHeight: 'calc(100% - 30px)', display: 'flex' }}>
         <PersonPanel />
       </Panel>
       <Panel position="bottom-left">

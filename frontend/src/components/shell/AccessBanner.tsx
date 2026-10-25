@@ -25,10 +25,10 @@ export function AccessBanner() {
       rels.filter((r) => r.is_redacted).length +
       gaps.filter((g) => g.is_redacted).length
     return (
-      <p role="status" className="flex items-center gap-2 rounded-md border border-slate-300 bg-slate-100 px-3 py-2 text-xs text-slate-700">
+      <p role="status" className="flex items-center gap-2 rounded-md border border-slate-300 bg-slate-100 px-3 py-1.5 text-xs text-slate-700">
         <Lock className="size-3.5 shrink-0" aria-hidden />
-        <span>
-          Viewing as <strong>{who}</strong>. {hidden} restricted {hidden === 1 ? 'item is' : 'items are'} hidden. The patient controls who can see them.
+        <span className="min-w-0 truncate" title="The patient controls who can see restricted items.">
+          <strong>{role}</strong> · {hidden} restricted {hidden === 1 ? 'item' : 'items'} hidden
         </span>
       </p>
     )
@@ -39,10 +39,10 @@ export function AccessBanner() {
     plans.filter((p) => p.sensitivity === 'restricted').length +
     rels.filter((r) => r.sensitivity === 'restricted').length
   return (
-    <p role="status" className="flex items-center gap-2 rounded-md border border-navy-100 bg-navy-50 px-3 py-2 text-xs text-navy-900">
+    <p role="status" className="flex items-center gap-2 rounded-md border border-navy-100 bg-navy-50 px-3 py-1.5 text-xs text-navy-900">
       <ShieldCheck className="size-3.5 shrink-0" aria-hidden />
-      <span>
-        Viewing as <strong>{who}</strong>. Access to restricted information is granted ({restricted} restricted {restricted === 1 ? 'item' : 'items'} visible).
+      <span className="min-w-0 truncate" title={`Viewing as ${who}`}>
+        <strong>{role}</strong> · restricted access ({restricted} {restricted === 1 ? 'item' : 'items'} visible)
       </span>
     </p>
   )

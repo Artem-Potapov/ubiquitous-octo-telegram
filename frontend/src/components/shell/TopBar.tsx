@@ -1,5 +1,3 @@
-import { FlaskConical } from 'lucide-react'
-import { USE_MOCK_API } from '../../api'
 import { daysUntil } from '../../lib/format'
 import { useConstellation } from '../../store/useConstellation'
 import { ROLES } from '../../store/roles'
@@ -32,14 +30,6 @@ export function TopBar() {
         </p>
         {context && <p className="truncate font-mono text-[11px] text-slate-500">{context}</p>}
       </div>
-
-      <span
-        title="All people and data in this app are fictional. Not for clinical use."
-        className="hidden items-center gap-1.5 rounded border border-warn-600/30 bg-warn-50 px-2 py-1 text-[11px] font-medium text-warn-700 lg:flex"
-      >
-        <FlaskConical className="size-3" aria-hidden />
-        {USE_MOCK_API ? 'Synthetic demo data' : 'Prototype'} · not for clinical use
-      </span>
 
       <div role="radiogroup" aria-label="Viewing as" className="ml-auto flex rounded-md border border-slate-200 bg-slate-50 p-0.5">
         {ROLES.map((r) => (

@@ -17,11 +17,14 @@ export type PersonFlowNode = Node<PersonNodeData, 'person'>
 // Edges join node centers, so the handles are invisible and centered.
 const centerHandle = { opacity: 0, top: '50%', left: '50%', width: 1, height: 1, minWidth: 0, minHeight: 0 }
 
-const ACCENT: Record<Person['person_type'], string> = {
-  patient: 'border-navy-900',
-  professional: 'border-navy-600',
-  family: 'border-teal-600',
+// Type is shown by a tinted fill and a colored outline, so it reads at a glance.
+// Selection uses a separate dark outline, so it is never mistaken for a type color.
+const TYPE_STYLE: Record<Person['person_type'], string> = {
+  patient: 'border-navy-900 bg-navy-900',
+  professional: 'border-navy-600 bg-navy-50',
+  family: 'border-teal-600 bg-teal-50',
 }
+const SELECTED = 'outline outline-2 outline-offset-[6px] outline-slate-900'
 
 export function PersonNode({ data }: NodeProps<PersonFlowNode>) {
   const { person, burnout, selected, emphasized } = data
@@ -38,8 +41,8 @@ export function PersonNode({ data }: NodeProps<PersonFlowNode>) {
         role="img"
         aria-label={`Patient: ${person.full_name}`}
         style={{ width: PATIENT_SIZE, height: PATIENT_SIZE }}
-        className={`flex cursor-pointer flex-col items-center justify-center rounded-full border-2 border-navy-900 bg-navy-900 px-3 text-center text-white ${
-          selected ? 'ring-4 ring-navy-500/40' : ''
+        className={`flex cursor-pointer flex-col items-center justify-center rounded-full border-2 px-3 text-center text-white ${TYPE_STYLE.patient} ${
+          selected ? SELECTED : ''
         }`}
       >
         {handles}
@@ -50,20 +53,19 @@ export function PersonNode({ data }: NodeProps<PersonFlowNode>) {
   }
 
   const level = burnout ? strainLevel(burnout.score) : null
+  // Warning rings (amber burnout, red gap) and the dark selection outline can show together.
   const ring = burnout
     ? 'ring-2 ring-warn-600 ring-offset-2'
     : emphasized
       ? 'ring-2 ring-danger-600 ring-offset-2'
-      : selected
-        ? 'ring-2 ring-navy-600 ring-offset-2'
-        : ''
+      : ''
 
   return (
     <div
       role="img"
       aria-label={`${person.full_name}, ${person.subrole}${burnout ? `, burnout warning: ${STRAIN_LABEL[level!]}` : ''}`}
       style={{ width: NODE_WIDTH, height: NODE_HEIGHT }}
-      className={`relative flex cursor-pointer flex-col justify-center rounded-lg border border-l-4 border-slate-200 bg-white px-3 ${ACCENT[person.person_type]} ${ring}`}
+      className={`relative flex cursor-pointer flex-col justify-center rounded-lg border-2 border-l-[6px] px-3 ${TYPE_STYLE[person.person_type]} ${ring} ${selected ? SELECTED : ''}`}
     >
       {handles}
       <span className="truncate text-sm font-semibold text-slate-900">{person.full_name}</span>
