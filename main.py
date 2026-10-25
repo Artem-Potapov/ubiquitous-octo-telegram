@@ -1,10 +1,11 @@
 from contextlib import asynccontextmanager
 
-import anyio
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
+from api.errors import register_exception_handlers
+from api.routers import ALL_ROUTERS
 from db.db_manager import SQLiteDBManager
-from misc.dependencies import DatabaseDependency
 
 
 @asynccontextmanager
@@ -21,8 +22,16 @@ app = FastAPI(lifespan=lifespan)
 #Yeah so just don't delete this part but feel free to move it somewhere else
 #DO NOT cut out the lifespan out of fastapi, or DB won't start
 
-@app.get("/some/url")
-#To get full type hinting across the DB do this, PyCharm does not like app.state
-async def something(network_id: int, viewer_id: int, db: DatabaseDependency):
-    await anyio.sleep(0)
-    return
+# Routes get the DB through misc.dependencies.DatabaseDependency for full type hinting;
+# PyCharm does not like app.state.
+
+# Same hosts as allowedHosts in frontend/vite.config.js, on any scheme and port.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|demo\.somenewsteps\.space)(:\d+)?",
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+register_exception_handlers(app)
+for router in ALL_ROUTERS:
+    app.include_router(router)
