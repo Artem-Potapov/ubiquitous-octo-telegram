@@ -75,6 +75,14 @@ None of these exist yet. The paths are a proposal; if you choose different ones,
 3. `POST /networks/{id}/gaps/detect`
 4. Reload
 
+## Frontend notes (TypeScript rewrite)
+
+The rewrite is a single-screen dashboard (`src/App.tsx`) and calls the same endpoints as above; nothing new is required of the backend.
+
+- **Mock-only features.** Care-plan upload and conflict review (`createCarePlan`, `analyzeCarePlans` in `mockBackend.js`) have no endpoints, so the Care Plans tab hides them when `VITE_USE_MOCK_API=false`. The activity log shows "Reassigned to ..." but not an SMS result, because no endpoint returns one.
+- **Derived on the client for now.** `components/graph/gapEdges.ts` works out which two people a gap touches from task owners and care-plan authors, and `lib/burnout.ts` splits the score into its parts using the formula below. A `node_ids` field on `Gap` and a breakdown on the burnout score would let the backend own both.
+- **Viewer id.** Role buttons map to seeded people in `src/store/roles.ts` (1, 2, 6 and 9) and send that id as `X-Viewer-Id`.
+
 ## Gap-detection rules the UI expects
 
 These are the rules in `src/domain/gapEngine.js`. The mock uses them, so the backend engine can port them directly.
