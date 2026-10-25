@@ -1,7 +1,7 @@
 """
 Caregiver Constellation - DBManager contract.
 
-Shared by everyone. The real SQLiteDBManager (aiosqlite) and any FakeDBManager
+Shared by everyone. The real SQLiteDBManager (SQLAlchemy) and any FakeDBManager
 both subclass DBManager and must follow the behaviour described in the docstrings
 below and in the "DBManager Contract" doc.
 
