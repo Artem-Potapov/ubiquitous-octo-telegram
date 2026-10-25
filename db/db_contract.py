@@ -7,14 +7,13 @@ below and in the "DBManager Contract" doc.
 
 Do not redefine these models elsewhere; import them from here.
 """
-
-from __future__ import annotations
-
-from datetime import date, datetime, time
+from datetime import date, time
+from datetime import datetime
 from enum import Enum
 from typing import Final
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import model_validator, Field as PDField
+from sqlmodel import Field as SQField, SQLModel
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -88,32 +87,10 @@ class GapStatus(str, Enum):
 
 
 # ---------------------------------------------------------------------------
-# Exceptions  (map: NotFound -> 404, AccessDenied -> 403, Conflict -> 409)
-# ---------------------------------------------------------------------------
-
-class DatabaseError(Exception):
-    """Base class for every error DBManager raises on purpose."""
-
-
-class NotFoundError(DatabaseError):
-    """An id passed in does not exist."""
-
-
-class AccessDeniedError(DatabaseError):
-    """Viewer is not a network member, reads someone else's check-ins,
-    or a non-patient tries to grant/revoke restricted access."""
-
-
-class ConflictError(DatabaseError):
-    """The request contradicts current state (non-member assignee,
-    second network for a patient, removing the patient, ...)."""
-
-
-# ---------------------------------------------------------------------------
 # Models - people & networks
 # ---------------------------------------------------------------------------
 
-class PersonCreate(BaseModel):
+class PersonCreate(SQLModel):
     person_type: PersonType
     subrole: str                      # "cardiologist", "spouse", "neighbor", ...
     full_name: str
@@ -121,7 +98,7 @@ class PersonCreate(BaseModel):
     is_physician: bool = False
 
 
-class PersonUpdate(BaseModel):
+class PersonUpdate(SQLModel):
     """Only fields that are explicitly set are written."""
     subrole: str | None = None
     full_name: str | None = None
@@ -134,7 +111,7 @@ class Person(PersonCreate):
     created_at: datetime
 
 
-class CareNetworkCreate(BaseModel):
+class CareNetworkCreate(SQLModel):
     patient_id: int
     network_name: str
 
@@ -148,7 +125,7 @@ class CareNetwork(CareNetworkCreate):
 # Models - graph
 # ---------------------------------------------------------------------------
 
-class RelationshipCreate(BaseModel):
+class RelationshipCreate(SQLModel):
     network_id: int
     source_person_id: int
     target_person_id: int
@@ -162,7 +139,7 @@ class Relationship(RelationshipCreate):
     is_redacted: bool = False
 
 
-class NetworkGraph(BaseModel):
+class NetworkGraph(SQLModel):
     network_id: int
     nodes: list[Person]               # members, ordered by id
     edges: list[Relationship]         # ordered by id, redacted as needed
@@ -172,7 +149,7 @@ class NetworkGraph(BaseModel):
 # Models - tasks & assignments
 # ---------------------------------------------------------------------------
 
-class TaskCreate(BaseModel):
+class TaskCreate(SQLModel):
     network_id: int
     title: str
     category: TaskCategory
@@ -183,8 +160,7 @@ class TaskCreate(BaseModel):
     sensitivity: Sensitivity = Sensitivity.normal
     created_by_person_id: int | None = None
 
-
-class TaskUpdate(BaseModel):
+class TaskUpdate(SQLModel):
     """Only fields that are explicitly set are written."""
     title: str | None = None
     category: TaskCategory | None = None
@@ -195,19 +171,20 @@ class TaskUpdate(BaseModel):
     sensitivity: Sensitivity | None = None
 
 
-class TaskAssignment(BaseModel):
+class TaskAssignmentBase(SQLModel):
+    task_id: int = SQField(foreign_key="tasks.id")
+    person_id: int = SQField(foreign_key="people.id")
+    status: AssignmentStatus = AssignmentStatus.pending
+
+class TaskAssignment(TaskAssignmentBase):
     id: int
-    task_id: int
-    person_id: int
-    status: AssignmentStatus
     assigned_at: datetime
     updated_at: datetime
-
 
 class Task(TaskCreate):
     id: int
     created_at: datetime
-    assignments: list[TaskAssignment] = Field(default_factory=list)
+    assignments: list[TaskAssignment] = PDField(default_factory=list)
     is_redacted: bool = False
 
 
@@ -215,8 +192,8 @@ class Task(TaskCreate):
 # Models - availability
 # ---------------------------------------------------------------------------
 
-class AvailabilityWindowCreate(BaseModel):
-    weekday: int = Field(ge=0, le=6)  # 0 = Monday ... 6 = Sunday
+class AvailabilityWindowCreate(SQLModel):
+    weekday: int = PDField(ge=0, le=6)  # 0 = Monday ... 6 = Sunday
     start_time: time
     end_time: time
 
@@ -236,7 +213,7 @@ class AvailabilityWindow(AvailabilityWindowCreate):
 # Models - care plans & gaps
 # ---------------------------------------------------------------------------
 
-class CarePlanCreate(BaseModel):
+class CarePlanCreate(SQLModel):
     network_id: int
     author_person_id: int
     title: str
@@ -250,13 +227,13 @@ class CarePlan(CarePlanCreate):
     is_redacted: bool = False
 
 
-class GapCreate(BaseModel):
+class GapCreate(SQLModel):
     gap_kind: GapKind
     severity: GapSeverity
     description: str
     task_id: int | None = None
     suggested_assignee_id: int | None = None
-    related_care_plan_ids: list[int] = Field(default_factory=list)
+    related_care_plan_ids: list[int] = PDField(default_factory=list)
 
 
 class Gap(GapCreate):
@@ -273,11 +250,11 @@ class Gap(GapCreate):
 # Models - check-ins & burnout
 # ---------------------------------------------------------------------------
 
-class CheckinCreate(BaseModel):
+class CheckinCreate(SQLModel):
     person_id: int
     network_id: int
     message: str
-    sentiment_score: float = Field(ge=-1.0, le=1.0)  # computed before insert
+    sentiment_score: float = PDField(ge=-1.0, le=1.0)  # computed before insert
 
 
 class Checkin(CheckinCreate):
@@ -285,13 +262,13 @@ class Checkin(CheckinCreate):
     created_at: datetime
 
 
-class BurnoutScoreCreate(BaseModel):
+class BurnoutScoreCreate(SQLModel):
     person_id: int
     network_id: int
-    score: int = Field(ge=0, le=100)
-    task_share: float = Field(ge=0.0, le=1.0)
-    missed_count: int = Field(ge=0)
-    sentiment_average: float | None = Field(default=None, ge=-1.0, le=1.0)
+    score: int = PDField(ge=0, le=100)
+    task_share: float = PDField(ge=0.0, le=1.0)
+    missed_count: int = PDField(ge=0)
+    sentiment_average: float | None = PDField(default=None, ge=-1.0, le=1.0)
 
 
 class BurnoutScore(BurnoutScoreCreate):
@@ -303,14 +280,10 @@ class BurnoutScore(BurnoutScoreCreate):
 # Models - access control
 # ---------------------------------------------------------------------------
 
-class AccessGrant(BaseModel):
+class AccessGrant(SQLModel):
     network_id: int
     grantee_person_id: int
     granted_by_person_id: int
     granted_at: datetime
 
-
-# ---------------------------------------------------------------------------
-# The contract
-# ---------------------------------------------------------------------------
 

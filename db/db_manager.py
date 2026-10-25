@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from db_contract import PersonCreate, Person, PersonUpdate, CareNetworkCreate, CareNetwork, RelationshipCreate, Relationship, NetworkGraph, \
+from db.db_contract import PersonCreate, Person, PersonUpdate, CareNetworkCreate, CareNetwork, RelationshipCreate, Relationship, NetworkGraph, \
     TaskCreate, Task, TaskUpdate, TaskAssignment, AssignmentStatus, AvailabilityWindowCreate, AvailabilityWindow, CarePlanCreate, CarePlan, GapCreate, \
     Gap, GapStatus, CheckinCreate, Checkin, BurnoutScoreCreate, BurnoutScore, AccessGrant
 
 
-class DBManager(ABC):
+class FakeDBManager(ABC):
     """
     Rules every implementation follows:
 
